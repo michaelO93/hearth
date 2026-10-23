@@ -396,6 +396,44 @@ export function localIntent(utterance: string, state: HouseholdState): ToolResul
       text: "Told Mama. Tunde is on his way.",
     };
   }
+  if (/where is|where's/.test(q)) {
+    const who = q
+      .replace(/.*where(?:'s| is)\s*/, "")
+      .replace(/[?.!,]+$/g, "")
+      .trim();
+    const person = findPerson(current, who);
+    if (person) {
+      return {
+        state: current,
+        text: `${person.shortName} is ${person.presence} · ${person.location}. Last check-in ${relativeTime(person.lastCheckIn)}.`,
+      };
+    }
+  }
+  if (/what'?s left on|how much.*left|balance.*on|remaining on/.test(q)) {
+    const bill = current.bills.find(
+      (b) =>
+        q.includes(b.id) ||
+        q.includes(b.name.toLowerCase()) ||
+        q.includes(b.provider.toLowerCase()) ||
+        (b.id === "nepa" && /light|electric/.test(q)) ||
+        (b.id === "wedding" && /wedding|nkechi|contribution/.test(q)),
+    );
+    if (bill) {
+      const remain = bill.amount - bill.paidAmount;
+      return {
+        state: current,
+        text: `${bill.name}: ${naira(remain)} left of ${naira(bill.amount)} · ${bill.status}, due ${bill.due.slice(0, 10)}.`,
+      };
+    }
+  }
+  if (/who.*(clear|pay|settle|handle)|whose turn/.test(q)) {
+    const unpaid = current.bills.filter((b) => b.status !== "paid");
+    if (!unpaid.length) return { state: current, text: "Nothing open. The house is clear." };
+    return {
+      state: current,
+      text: `Tunde pays the house. Open: ${unpaid.map((b) => `${b.name} (${naira(b.amount - b.paidAmount)} left)`).join("; ")}.`,
+    };
+  }
   if (/who.*(home|here)|everyone|who's home|whos home/.test(q)) {
     run("get_people");
     const home = current.people.filter((p) => p.presence === "home").map((p) => p.shortName);

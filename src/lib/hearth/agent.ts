@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { HouseholdState } from "./types";
 import { executeTool, localIntent, toOpenAiTools, toolSummary } from "./tools";
+import { bedrockAsk, pollySpeak } from "./aws";
 
 const SYSTEM = `You are Hearth, the household steward for the Adeyemi family in Surulere, Lagos.
 You run on Alexa+ in the living room, with a Fire TV family board behind you.
@@ -30,7 +31,7 @@ export type AskHearthResult =
       reply: string;
       household: HouseholdState;
       tools: { name: string; summary: string }[];
-      mode: "alexa+" | "local";
+      mode: "bedrock" | "alexa+" | "local";
     }
   | { ok: false; error: string; household: HouseholdState };
 
@@ -43,6 +44,19 @@ export const askHearth = createServerFn({ method: "POST" })
     }
 
     const apiKey = process.env.XAI_API_KEY;
+    // AWS Builder path first: Bedrock (Claude) with Hearth tools. Falls
+    // through to xAI, then local intent — the board always answers.
+    const bedrock = await bedrockAsk(utterance, data.household, data.history);
+    if (bedrock.ok) {
+      return {
+        ok: true,
+        reply: bedrock.reply,
+        household: bedrock.household,
+        tools: bedrock.tools,
+        mode: "bedrock",
+      };
+    }
+
     if (!apiKey) {
       const local = localIntent(utterance, data.household);
       return {
@@ -173,6 +187,10 @@ export const askHearth = createServerFn({ method: "POST" })
 export const speakHearth = createServerFn({ method: "POST" })
   .validator((input: { text: string }) => input)
   .handler(async ({ data }) => {
+    // AWS Builder path first: Polly voice for the Alexa overlay.
+    const polly = await pollySpeak(data.text);
+    if (polly.ok) return { ok: true as const, audio: polly.audio };
+
     const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) return { ok: false as const, error: "Voice is unavailable." };
     const text = data.text.trim().slice(0, 400);

@@ -20,7 +20,7 @@ export function AlexaOverlay() {
 
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
-  const [mode, setMode] = useState<"alexa+" | "local" | null>(null);
+  const [mode, setMode] = useState<"bedrock" | "alexa+" | "local" | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -119,7 +119,7 @@ export function AlexaOverlay() {
             <div>
               <div className="font-display text-lg tracking-tight">Hearth</div>
               <div className="text-xs uppercase tracking-[0.16em] text-muted">
-                {pending ? "Working" : mode === "local" ? "Local steward" : "Alexa+"}
+                {pending ? "Working" : mode === "local" ? "Local steward" : mode === "bedrock" ? "Alexa+ · Bedrock" : "Alexa+"}
               </div>
             </div>
           </div>
