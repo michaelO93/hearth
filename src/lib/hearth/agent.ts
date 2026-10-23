@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { HouseholdState } from "./types";
 import { executeTool, localIntent, toOpenAiTools, toolSummary } from "./tools";
 import { bedrockAsk, pollySpeak } from "./aws";
+import { forSpeech } from "./format";
 
 const SYSTEM = `You are Hearth, the household steward for the Adeyemi family in Surulere, Lagos.
 You run on Alexa+ in the living room, with a Fire TV family board behind you.
@@ -188,12 +189,13 @@ export const speakHearth = createServerFn({ method: "POST" })
   .validator((input: { text: string }) => input)
   .handler(async ({ data }) => {
     // AWS Builder path first: Polly voice for the Alexa overlay.
-    const polly = await pollySpeak(data.text);
+    const spoken = forSpeech(data.text);
+    const polly = await pollySpeak(spoken);
     if (polly.ok) return { ok: true as const, audio: polly.audio };
 
     const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) return { ok: false as const, error: "Voice is unavailable." };
-    const text = data.text.trim().slice(0, 400);
+    const text = spoken.slice(0, 400);
     if (!text) return { ok: false as const, error: "Nothing to say." };
 
     try {

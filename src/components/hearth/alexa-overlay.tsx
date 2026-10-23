@@ -4,6 +4,7 @@ import { askHearth, speakHearth } from "@/lib/hearth/agent";
 import { localIntent } from "@/lib/hearth/tools";
 import { SUGGESTED_ASKS } from "@/lib/hearth/seed";
 import { useHearth } from "@/lib/hearth/store";
+import { forSpeech } from "@/lib/hearth/format";
 import { cn } from "@/lib/utils";
 
 type SpeechRec = {
@@ -68,7 +69,7 @@ export function AlexaOverlay() {
       return;
     }
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+    const u = new SpeechSynthesisUtterance(forSpeech(text));
     u.lang = "en-GB";
     u.onend = () => setSpeaking(false);
     u.onerror = () => setSpeaking(false);
