@@ -6,6 +6,17 @@ import { SUGGESTED_ASKS } from "@/lib/hearth/seed";
 import { useHearth } from "@/lib/hearth/store";
 import { cn } from "@/lib/utils";
 
+type SpeechRec = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+  onend: (() => void) | null;
+};
+
 export function AlexaOverlay() {
   const open = useHearth((s) => s.alexaOpen);
   const setOpen = useHearth((s) => s.setAlexaOpen);
@@ -24,6 +35,12 @@ export function AlexaOverlay() {
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<SpeechRec | null>(null);
+  const [listening, setListening] = useState(false);
+
+  useEffect(() => {
+    if (!open) stopListening();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -44,8 +61,22 @@ export function AlexaOverlay() {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: "smooth" });
   }, [turns, pending]);
 
-  async function speak(text: string) {
-    if (muted) return;
+  // Browser voice as the last resort, so "Voice on" always says something.
+  function speakInBrowser(text: string) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      setSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "en-GB";
+    u.onend = () => setSpeaking(false);
+    u.onerror = () => setSpeaking(false);
+    window.speechSynthesis.speak(u);
+  }
+
+  async function speak(text: string, force = false) {
+    if (muted && !force) return;
     setSpeaking(true);
     try {
       const res = await speakHearth({ data: { text } });
@@ -54,14 +85,59 @@ export function AlexaOverlay() {
         const audio = new Audio(res.audio);
         audioRef.current = audio;
         audio.onended = () => setSpeaking(false);
-        audio.onerror = () => setSpeaking(false);
-        await audio.play().catch(() => setSpeaking(false));
+        audio.onerror = () => speakInBrowser(text);
+        await audio.play().catch(() => speakInBrowser(text));
       } else {
-        setSpeaking(false);
+        speakInBrowser(text);
       }
     } catch {
-      setSpeaking(false);
+      speakInBrowser(text);
     }
+  }
+
+  function stopListening() {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setListening(false);
+  }
+
+  function startListening() {
+    const w = window as unknown as { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) {
+      addTurn({ role: "hearth", text: "This browser can't hear me. Open Hearth in Chrome to talk, or type below." });
+      return;
+    }
+    audioRef.current?.pause();
+    window.speechSynthesis?.cancel();
+    const rec = new Ctor();
+    rec.lang = "en-NG";
+    rec.interimResults = true;
+    rec.continuous = false;
+    let finalText = "";
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      setDraft((finalText || interim).trim());
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        addTurn({ role: "hearth", text: "I need microphone access. Allow it in the browser's address bar, then tap the mic again." });
+      }
+      stopListening();
+    };
+    rec.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+      if (finalText.trim()) void send(finalText);
+    };
+    recognitionRef.current = rec;
+    setListening(true);
+    rec.start();
   }
 
   async function send(text: string) {
@@ -87,6 +163,7 @@ export function AlexaOverlay() {
         setHousehold(local.state);
         setMode("local");
         addTurn({ role: "hearth", text: local.text });
+        void speak(local.text);
         return;
       }
       if (!res.ok) {
@@ -128,10 +205,18 @@ export function AlexaOverlay() {
               type="button"
               onClick={() => {
                 audioRef.current?.pause();
-                setMuted(!muted);
+                window.speechSynthesis?.cancel();
                 setSpeaking(false);
+                const next = !muted;
+                setMuted(next);
+                // Speak right away so the toggle is audible (and unlocks audio on this click).
+                if (!next) void speak("Voice on.", true);
               }}
-              className="rounded-md px-3 py-2 text-xs uppercase tracking-[0.14em] text-muted hover:text-fg"
+              aria-pressed={!muted}
+              className={cn(
+                "rounded-md px-3 py-2 text-xs uppercase tracking-[0.14em] hover:text-fg",
+                muted ? "text-muted" : "bg-elevated text-fg shadow-border",
+              )}
             >
               {muted ? "Voice off" : "Voice on"}
             </button>
@@ -213,12 +298,24 @@ export function AlexaOverlay() {
           }}
         >
           <div className="flex items-center gap-2 rounded-md bg-elevated px-3 py-2 shadow-border">
-            <Mic className="size-4 shrink-0 text-muted" strokeWidth={1.75} />
+            <button
+              type="button"
+              onClick={() => (listening ? stopListening() : startListening())}
+              disabled={pending}
+              aria-label={listening ? "Stop listening" : "Speak to Hearth"}
+              aria-pressed={listening}
+              className={cn(
+                "grid size-11 shrink-0 place-items-center rounded-sm disabled:opacity-40",
+                listening ? "animate-pulse bg-accent text-accent-fg" : "text-muted hover:text-fg",
+              )}
+            >
+              <Mic className="size-4" strokeWidth={1.75} />
+            </button>
             <input
               ref={inputRef}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="Ask the house"
+              placeholder={listening ? "Listening…" : "Ask the house, or tap the mic"}
               className="h-11 min-w-0 flex-1 bg-transparent text-base text-fg outline-none placeholder:text-subtle"
               autoComplete="off"
             />
